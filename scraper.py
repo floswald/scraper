@@ -3,7 +3,7 @@ from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, ElementNotVisibleException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from codecs import open
@@ -41,7 +41,7 @@ def startDriver():
 
 def resetDriver(driver):
 	""" bring browser back to search page
-	after 
+	after """
 
 
 
@@ -52,8 +52,8 @@ def bank_date(bank,date,driver):
 	try:
 		downelt = WebDriverWait(driver,10).until(EC.presence_of_element_located((By.XPATH,"//select[@id='SearchBy']")))
 		ddown = Select(downelt)
-	finally:
-		print "waited for 10 seconds to load search page. quitting."
+	except ElementNotVisibleException:
+		print "waited for 10 seconds to load search page. quitting driver."
 		driver.quit()
 
 	# select "Party"
@@ -242,6 +242,5 @@ def parse_string(el):
 
 
 if __name__ == "__main__":
-    import sys
-    launchScraper(sys.argv[1], sys.argv[2])
+    launchScraper()
 

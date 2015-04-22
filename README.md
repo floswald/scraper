@@ -6,6 +6,8 @@
 
 ## how to do this:
 
+* selenium: http://selenium-python.readthedocs.org/en/latest/locating-elements.html
+
 
 how to scrape an html table: http://codereview.stackexchange.com/questions/60769/scrape-an-html-table-with-python
 
