@@ -155,6 +155,19 @@ class Bank:
         print "    searching for %s turns up %d cases" % (term, len(rows[3:]))
         self.setCases(BoCcases)
 
+        
+    def setCases(self, cases):
+        self.cases = cases
+        self.casesToGo = cases
+        self.currentCase = cases.keys()[0]
+
+    def caseDone(self):
+        self.casesToGo.pop(self.currentCase)  # get rid of current case
+        if len(self.casesToGo) == 0:
+            self.done = True
+        else:
+            self.currentCase = self.casesToGo.keys()[0]  # replace current case
+
 
     def parseSingleCase(self):
         """parse the current case"""
