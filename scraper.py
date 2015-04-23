@@ -8,7 +8,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from codecs import open
 import os
-from json import load, dump
+import json
 from datetime import datetime
 
 
@@ -27,7 +27,15 @@ class Driver:
     def goSearch(self):
         if self.getURL() is not self.baseurl:
             self.goHome()
-        self.driver.find_element_by_link_text("District Civil/Criminal Records").click()
+            try: 
+                WebDriverWait(self.driver, 30).until(EC.presence_of_element_located((By.LINK_TEXT, "District Civil/Criminal Records")))
+                self.driver.find_element_by_link_text("District Civil/Criminal Records").click()
+            except NoSuchElementException:
+                print "server is done after 30 secs. restart."
+                self.driver.implicitly_wait(5)
+                self.goHome()
+                self.driver.refresh()
+                self.goSearch()
 
     def getSource(self):
         self.driver.page_source
@@ -50,6 +58,7 @@ class Bank:
         self.done = False
         self.searchURL = 'none'
         self.fname = 'none'
+        self.changeDates = True
         self.data = {'bank': bname, 'caseCount': 0, 'done': False, 'dates_from': "0", "dates_to": "0",
                      'currentCase': 'none'}
 
@@ -60,8 +69,8 @@ class Bank:
         assert len(dates) == 2
         self.dates[0] = dates[0]
         self.dates[1] = dates[1]
-        self.data["date_from"] = self.dates[0]
-        self.data["date_to"] = self.dates[1]
+        self.data["dates_from"] = self.dates[0]
+        self.data["dates_to"] = self.dates[1]
 
         # move browser to district court search
         # if self.browser.driver.current_url is self.browser.baseurl:
@@ -124,18 +133,24 @@ class Bank:
         self.searchURL = self.browser.driver.current_url
 
     def checkCaseList(self):
-    	soup = BeautifulSoup(self.browser.driver.page_source)
-    	if "too many matches" in soup.find("td",align="center",style="color:#FF4040").contents[0].get_text():
-			df       = "%m/%d/%Y"
-			todate   = datetime.strptime(self.dates[1], df)
-			fromdate = datetime.strptime(self.dates[0], df)
-			delta    = (todate - fromdate) / 2
-			newto    = (fromdate + delta).strftime(df)
-			print "too many results for %s - %s" % (self.dates[0],self.dates[1])
-			print "changed search to end on %s" % newto
-			self.dates[1] = newto
-			print "resubmitting search now"
-			self.reSubmitSearch()
+        soup = BeautifulSoup(self.browser.driver.page_source)
+        tag = soup.findAll("td",align="center",style="color:#FF4040")
+        if len(tag) > 0 and "too many matches" in tag[0].contents[0].get_text():
+            self.changeDates = True
+            df               = "%m/%d/%Y"
+            todate           = datetime.strptime(self.dates[1], df)
+            fromdate         = datetime.strptime(self.dates[0], df)
+            delta            = (todate - fromdate) / 2
+            newto            = (fromdate + delta).strftime(df)
+            print "too many results for %s - %s" % (self.dates[0],self.dates[1])
+            print "changed search to end on %s" % newto
+            self.dates[1] = newto
+            print "resubmitting search now"
+            self.reSubmitSearch()
+        else:
+            self.changeDates = False
+
+
 
     def parseCaseList(self, term):
         """ get the HTML source of the current page_source
@@ -155,7 +170,7 @@ class Bank:
         print "    searching for %s turns up %d cases" % (term, len(rows[3:]))
         self.setCases(BoCcases)
 
-        
+
     def setCases(self, cases):
         self.cases = cases
         self.casesToGo = cases
@@ -221,25 +236,26 @@ class Bank:
                 d["Disposition"] = disp.contents[0].get_text().encode('utf-8')
                 d["Judge"] = disp.contents[1].encode('utf-8').strip(" or ( or )")
                 rows = disp.contents[3].find_all("tr")
-                for r in rows:
-                    data = map(parse_string, r.findAll("td"))[0]
-                    # print(data)
-                    if len(data) > 0:
-                        if data.count(":") == 1:
-                            s = data.split(":")
-                            d[s[0]] = s[1:]
-                            d["hasData"] = True
-                        elif data.count(":") == 2 and "," in data:
-                            s = data.split(",")
-                            s1 = s[0].split(":")
-                            d[s1[0]] = s1[1]
-                            s1 = s[1].split(":")
-                            d[s1[0]] = s1[1]
-                            d["hasData"] = True
-                        else:
-                            d["hasData"] = False
-                        # print "in case number %s" % d["Case No."]
-                        # print "no data in CDisp RDISPDATE1 collected"
+                if len(rows) > 0:
+                    for r in rows:
+                        data = map(parse_string, r.findAll("td"))[0]
+                        # print(data)
+                        if len(data) > 0:
+                            if data.count(":") == 1:
+                                s = data.split(":")
+                                d[s[0]] = s[1:]
+                                d["hasData"] = True
+                            elif data.count(":") == 2 and "," in data:
+                                s = data.split(",")
+                                s1 = s[0].split(":")
+                                d[s1[0]] = s1[1]
+                                s1 = s[1].split(":")
+                                d[s1[0]] = s1[1]
+                                d["hasData"] = True
+                            else:
+                                d["hasData"] = False
+                            # print "in case number %s" % d["Case No."]
+                            # print "no data in CDisp RDISPDATE1 collected"
         else:
             d["hasData"] = False
         # print "in case number %s" % d["Case No."]
@@ -254,22 +270,37 @@ class Bank:
         try:
             WebDriverWait(self.browser.driver, 15).until(EC.presence_of_element_located(
                 (By.XPATH, "/html/body/table[4]/tbody/tr[1]/th[1][@class='ssSearchResultHeader']/b")))
-            self.checkCaseList()
+
+            while self.changeDates:
+            	self.checkCaseList()
+
             self.parseCaseList("Breach of Contract")
         except NoSuchElementException:
             print "could not get results table"
             self.browser.driver.quit()
 
         # set up filename
-        path = os.path.join('.', 'output', self.bankname.replace(" ","_"))
+        path = os.path.join(os.getcwd(), 'output', self.bankname.replace(" ","_"))
         if not os.path.isdir(path):
             os.makedirs(path)
-        self.fname = os.path.join(path, ''.join([dates[0].replace("/",""),"-",dates[1].replace("/",""), ".json"]))
+        self.fname = os.path.join(path, ''.join([self.dates[0].replace("/",""),"-",self.dates[1].replace("/",""), ".json"]))
+        if os.path.isfile(self.fname):
+        	os.remove(self.fname)
         print "saving to filename %s" % self.fname
 
         # check it 
         # run the search
+        self.data["dates_from"] = self.dates[0]
+        self.data["dates_to"] = self.dates[1]
         self.continueBankSearch()
+
+    # def warmStart(file):
+    	# load file
+    	# start browser
+    	# start bank
+    	# fill in dates
+    	# set self.currentCase = data["currentCase"]
+    	# call 
 
 
     def continueBankSearch(self):
@@ -291,8 +322,9 @@ class Bank:
             except NoSuchElementException:
                 print "could not open link for case %s" % case
                 print "trying to reset the browser"
-                self.browser.driver.goHome()
-                self.browser.driver.goSearch()
+                self.browser.goHome()
+                self.browser.driver.implicitly_wait(10)  # and wait 1 second
+                self.browser.goSearch()
                 self.reSubmitSearch()
                 self.browser.driver.implicitly_wait(1)  # and wait 1 second
                 pass
@@ -310,12 +342,18 @@ class Bank:
             self.caseDone()
 
     def updateData(self):
-        f = open(self.fname, 'rw')
-        d = json.load(f)
-        d.update(self.data)
-        json.dump(d, f)
+        f = open(self.fname, 'w')
+        json.dump(self.data, f)
         f.close()
-
+        print "saved data to %s" % self.fname
+        #     print "created %s" % self.fname
+        # else:
+        #     print "trying to update %s" % self.fname
+        #     f = open(self.fname, 'w')
+        #     d = json.load(f)
+        #     d.update(self.data)
+        #     json.dump(d,f)
+        #     f.close()
 
 # run the scraper:
 
