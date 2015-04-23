@@ -9,6 +9,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from codecs import open
 import os
 from json import load, dump
+from datetime import datetime
 
 
 # http://stackoverflow.com/questions/989872/how-do-i-draw-out-specific-data-from-an-opened-url-in-python-using-urllib2/989920#989920
@@ -42,7 +43,7 @@ class Bank:
     def __init__(self, bname, Driver):
         self.bankname = bname
         self.browser = Driver
-        self.dates = ('no from', 'no to')
+        self.dates = ['no from', 'no to']
         self.currentCase = 'none'
         self.cases = {}
         self.casesToGo = {}
@@ -57,7 +58,8 @@ class Bank:
 		at dates. browser will display search results"""
 
         assert len(dates) == 2
-        self.dates = dates
+        self.dates[0] = dates[0]
+        self.dates[1] = dates[1]
         self.data["date_from"] = self.dates[0]
         self.data["date_to"] = self.dates[1]
 
@@ -82,7 +84,9 @@ class Bank:
         self.browser.driver.find_element_by_xpath("//input[@id='DateFiledOnAfter']").send_keys(self.dates[0])
         self.browser.driver.find_element_by_xpath("//input[@id='DateFiledOnBefore']").send_keys(self.dates[1])
         # submit the search
+
         self.browser.driver.find_element_by_xpath("//input[@id='SearchSubmit']").click()
+        self.browser.driver.implicitly_wait(2)
 
         # store the URL of search results: list of cases
         self.searchURL = self.browser.driver.current_url
@@ -119,18 +123,19 @@ class Bank:
         # store the URL of search results: list of cases
         self.searchURL = self.browser.driver.current_url
 
-
-    def setCases(self, cases):
-        self.cases = cases
-        self.casesToGo = cases
-        self.currentCase = cases.keys()[0]
-
-    def caseDone(self):
-        self.casesToGo.pop(self.currentCase)  # get rid of current case
-        if len(self.casesToGo) == 0:
-            self.done = True
-        else:
-            self.currentCase = self.casesToGo.keys()[0]  # replace current case
+    def checkCaseList(self):
+    	soup = BeautifulSoup(self.browser.driver.page_source)
+    	if "too many matches" in soup.find("td",align="center",style="color:#FF4040").contents[0].get_text():
+			df       = "%m/%d/%Y"
+			todate   = datetime.strptime(self.dates[1], df)
+			fromdate = datetime.strptime(self.dates[0], df)
+			delta    = (todate - fromdate) / 2
+			newto    = (fromdate + delta).strftime(df)
+			print "too many results for %s - %s" % (self.dates[0],self.dates[1])
+			print "changed search to end on %s" % newto
+			self.dates[1] = newto
+			print "resubmitting search now"
+			self.reSubmitSearch()
 
     def parseCaseList(self, term):
         """ get the HTML source of the current page_source
@@ -236,17 +241,20 @@ class Bank:
         try:
             WebDriverWait(self.browser.driver, 15).until(EC.presence_of_element_located(
                 (By.XPATH, "/html/body/table[4]/tbody/tr[1]/th[1][@class='ssSearchResultHeader']/b")))
+            self.checkCaseList()
             self.parseCaseList("Breach of Contract")
         except NoSuchElementException:
             print "could not get results table"
             self.browser.driver.quit()
 
         # set up filename
-        path = os.path.join('.', self.bankname)
+        path = os.path.join('.', 'output', self.bankname.replace(" ","_"))
         if not os.path.isdir(path):
             os.makedirs(path)
-        self.fname = os.path.join(path, ''.join([dates[0].strip("/"), ".json"]))
+        self.fname = os.path.join(path, ''.join([dates[0].replace("/",""),"-",dates[1].replace("/",""), ".json"]))
         print "saving to filename %s" % self.fname
+
+        # check it 
         # run the search
         self.continueBankSearch()
 
