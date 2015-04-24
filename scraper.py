@@ -13,10 +13,13 @@ import copy
 from datetime import datetime, timedelta
 
 
-# http://stackoverflow.com/questions/989872/how-do-i-draw-out-specific-data-from-an-opened-url-in-python-using-urllib2/989920#989920
+# 
 
 
 
+
+class NoCasesException(Exception):
+	pass
 
 
 class Driver:
@@ -50,7 +53,7 @@ class Driver:
 
 
 class Bank:
-    def __init__(self, bname, Driver, dates,verbose=0):
+    def __init__(self, bname, Driver, init_dates):
         self.bankname = bname
         self.browser = Driver
         self.currentCase = 'none'
@@ -61,14 +64,18 @@ class Bank:
         self.searchURL = 'none'
         self.fname = 'none'
         self.changeDates = True
-        assert len(dates) == 2
-        self.dates = dates
-        self.submittedDates = copy.deepcopy(dates)
+        assert len(init_dates) == 2
+        self.dates = copy.deepcopy(init_dates)
+        self.submittedDates = copy.deepcopy(init_dates)
         self.data = {'bank': bname, 'caseCount': 0, 'done': False, 'dates_from': "0", "dates_to": "0",
                      'currentCase': 'none', 'cases' : {}}
+        print "set up Bank %s from %s to %s" % (self.bankname, self.dates[0],self.dates[1])
 
 
     def checkCaseList(self):
+        """see if the result table has a red 
+        heading with TOO MANY CASES, and restrict the 
+        time frame if it is the case"""
         soup = BeautifulSoup(self.browser.driver.page_source)
         tag = soup.findAll("td",align="center",style="color:#FF4040")
         if len(tag) > 0 and "too many matches" in tag[0].contents[0].get_text():
@@ -94,6 +101,7 @@ class Bank:
 
     def caseDone(self):
         self.casesToGo.pop(self.currentCase)  # get rid of current case
+        # print "number cases to go %d:" % len(self.casesToGo.keys())
         if len(self.casesToGo) == 0 and self.dates[1] == self.submittedDates[1] :
             self.done = True
             self.doneRange = True
@@ -103,13 +111,17 @@ class Bank:
         else:
             self.currentCase = self.casesToGo.keys()[0]  # replace current case and go on
 
+	def cleanDates(self):
+		self.dates = ['0','0']
+		self.submittedDates = ['0','0']
 
     # parsing functions
     # =================
 
     def parseCaseList(self, term):
         """ get the HTML source of the current page_source
-		and save the dict of relevant cases """
+		and save the dict of relevant cases. Also raise
+		and exception if no cases are found at all."""
 
         soup = BeautifulSoup(self.browser.driver.page_source)
 
@@ -122,8 +134,14 @@ class Bank:
             cols = rowv.findAll('td')
             if term in cols[4].text:
                 BoCcases[cols[0].text] = rowv
-        print "    searching for %s turns up %d cases" % (term, len(rows[3:]))
-        self.setCases(BoCcases)
+
+        self.numcases = len(BoCcases)
+        print "searching for %s turns up %d cases" % (term, self.numcases)
+        print ""
+        if self.numcases == 0:
+        	raise NoCasesException("No Cases found in %s for %s - %s" % (self.bankname, self.dates[0], self.dates[1]))
+        else:
+	        self.setCases(BoCcases)
 
 
 
@@ -228,6 +246,8 @@ class Bank:
             	self.checkCaseList()
 
             self.parseCaseList("Breach of Contract")
+        except NoCasesException:
+            return 0
         except NoSuchElementException:
             print "could not get results table"
             self.browser.driver.quit()
@@ -336,6 +356,7 @@ class Bank:
 
                 case = self.currentCase
                 self.caseCount = self.caseCount + 1
+                # print "this is case [%d/%d]" % (self.caseCount, self.numcases)
                 # print "trying case %s" % case
                 try:
                     link = WebDriverWait(self.browser.driver,self.browser.wait).until(EC.element_to_be_clickable((By.LINK_TEXT,case)))
@@ -354,6 +375,7 @@ class Bank:
                     pass
                 except AttributeError:
                     print "could not parse case %s" % case
+                    print ""
                     pass
 
                 self.data['caseCount'] = self.caseCount
@@ -365,6 +387,7 @@ class Bank:
             if self.doneRange is False:
                 # get new date range
                 # get final date of last search:
+                self.updateData()
                 todate = datetime.strptime(self.dates[1],"%m/%d/%Y")
                 newfromdate = todate + timedelta(days = 1)
                 self.dates[0] = newfromdate.strftime("%m/%d/%Y")
@@ -373,8 +396,10 @@ class Bank:
                 print "submitting search for %s - %s" % (self.dates[0],self.submittedDates[1])
                 self.startBankSearch()
             else:
-                print "finished search in %s" % self.bankname
                 self.updateData()
+                print ""
+                print "finished search in %s" % self.bankname
+                print ""
 
         # return control to upper loop
         return 0
@@ -384,7 +409,8 @@ class Bank:
         f = open(self.fname, 'w')
         json.dump(self.data, f)
         f.close()
-        print "saved data at case count %d to file %s" % (self.caseCount,self.fname)
+        print "saved data at case [%d/%d]" % (self.caseCount,self.numcases)
+        print "to file %s" % self.fname
 
         #     print "created %s" % self.fname
         # else:
@@ -406,18 +432,20 @@ def parse_string(el):
 
 
 def run():
-	banks = ["WELLS FARGO BANK", "US BANK","CITIBANK","DEUTSCHE BANK NA TRUS","BAC HOME LOAN SERVICI","JP MORTGAGE CHASE BANK","CHASE HOME FINANCE","HSBC ","BANK OF AMERICA","GMAC ","PNC NATIONAL BANK","BANK OF NEW YORK MELL"]
+	banks = ["US BANK","CITIBANK","DEUTSCHE BANK NA TRUS","BAC HOME LOAN SERVICI","JP MORTGAGE CHASE BANK","CHASE HOME FINANCE","HSBC ","BANK OF AMERICA","GMAC ","PNC NATIONAL BANK","BANK OF NEW YORK MELL"]
 	# banks = ["US BANK"]
 	# banks =["WELLS FARGO BANK","US BANK","CITIBANK","DEUTSCHE BANK NA TRUS","BAC HOME LOAN SERVICI","JP MORTGAGE CHASE BANK","CHASE HOME FINANCE","HSBC ","BANK OF AMERICA","GMAC ","PNC NATIONAL BANK","BANK OF NEW YORK MELL","NATIONAL CITY BANK","AURORA LOAN SERVICES","LASALLE BANK NA","PROVIDIAN NATIONAL BANK","NEVADA STATE BANK","WASHINGTON MUTUAL","CAPITAL ONE","ONE NEVADA CREDIT UNION","AMERICA FIRST CREDIT UNION","CLARK COUNTY CREDIT UNION","WEST STAR CREDIT UNION","PLUS CREDIT UNION","STAGE EMPLOYEES FEDERAL CREDIT UNION"]
 	# provide 2 time spans by default
 	dateSpan = ["01/01/2000", "01/01/2015"]
 	dr = Driver("https://www.clarkcountycourts.us/Anonymous/default.aspx",30)
 	for b in banks:
+		print ""
 		print "starting to search: %s" % b
 		print "==========================="
 		print ""
 		bb = Bank(b, dr, dateSpan)
 		retval = bb.startBankSearch()
+        bb.cleanDates()
 
 	print "scraper finished with:"
 	print banks
