@@ -11,15 +11,19 @@ import os
 import json
 import copy
 from datetime import datetime, timedelta
+import re
 
 
 # 
-
+    
 
 
 
 class NoCasesException(Exception):
 	pass
+
+class BrowserErrorException(Exception):
+    pass
 
 
 class Driver:
@@ -68,7 +72,7 @@ class Bank:
         self.dates = copy.deepcopy(init_dates)
         self.submittedDates = copy.deepcopy(init_dates)
         self.data = {'bank': bname, 'caseCount': 0, 'done': False, 'dates_from': "0", "dates_to": "0",
-                     'currentCase': 'none', 'cases' : {}}
+                     'currentCase': 'none', 'cases' : {}, 'not_parsed' : []}
         print "set up Bank %s from %s to %s" % (self.bankname, self.dates[0],self.dates[1])
 
 
@@ -99,8 +103,8 @@ class Bank:
         self.casesToGo = cases
         self.currentCase = cases.keys()[0]
 
-    def caseDone(self):
-        self.casesToGo.pop(self.currentCase)  # get rid of current case
+    def caseDone(self,currentCase):
+        self.casesToGo.pop(currentCase)  # get rid of current case
         # print "number cases to go %d:" % len(self.casesToGo.keys())
         if len(self.casesToGo) == 0 and self.dates[1] == self.submittedDates[1] :
             self.done = True
@@ -152,6 +156,11 @@ class Bank:
 
         soup = BeautifulSoup(self.browser.driver.page_source)
 
+        # TODO check if this an error page:
+        errors = soup.find_all(class_="ssHeaderTitleBanner")        
+        if len(errors) > 0 and "Public Access Error" in errors[0].get_text():
+            raise BrowserErrorException
+
         # dict
         d = {}
 
@@ -176,8 +185,19 @@ class Bank:
         for i in range(0, 5):
             d[h[i].get_text().encode('utf-8').strip(":")] = h[i].next_sibling.get_text().encode('utf-8')
 
-        # find all headings of interest:
-        h = soup.find_all("th", "ssEventsAndOrdersSubTitle")
+        # get Party Information table
+        parties = soup.find_all("caption",text="Party Information")[0].parent
+        defendants = parties.findAll("th",text="Defendant")
+        idcount = 0
+        for defe in defendants:
+            idcount += 1
+            d[''.join([defe.get_text().encode('utf-8').strip(),"_",str(idcount)])] = defe.next_sibling.get_text().encode('utf-8').strip()
+
+        plaintiffs = parties.findAll("th",text="Plaintiff")
+        idcount = 0
+        for defe in plaintiffs:
+            idcount += 1
+            d[''.join([defe.get_text().encode('utf-8').strip(),"_",str(idcount)])] = defe.next_sibling.get_text().encode('utf-8').strip()
 
         if len(soup.find_all(text="DISPOSITIONS")) > 0:
 
@@ -193,35 +213,40 @@ class Bank:
                 for e in res1[1:]:
                     if len(e) > 0:
                         s = e.split(":")
-                        d[s[0]] = s[1]
+                        d[s[0]] = s[1].encode('utf-8').strip()
 
             else:
                 # have to tease it out
                 disp = soup.find("td", headers="CDisp RDISPDATE1")
                 # go on:
-                d["Disposition"] = disp.contents[0].get_text().encode('utf-8')
-                d["Judge"] = disp.contents[1].encode('utf-8').strip(" or ( or )")
-                rows = disp.contents[3].find_all("tr")
+                
+                # sometimes the main disposition is indented (multiple dispositions), and then the first element is a date
+                match = re.search(r'(\d+/\d+/\d+)',disp.contents[0].get_text())
+                if match is None:
+                    addidx = 0
+                else:
+                    addidx = 1
+
+                d["Disposition"] = disp.contents[0+addidx].get_text().encode('utf-8').strip()
+                d["Judge"] = disp.contents[1+addidx].encode('utf-8').strip(" or ( or )").strip()
+                rows = disp.contents[3+addidx].find_all("tr")
                 if len(rows) > 0:
+                    d["hasData"] = True
                     for r in rows:
                         data = map(parse_string, r.findAll("td"))[0]
                         # print(data)
                         if len(data) > 0:
                             if data.count(":") == 1:
                                 s = data.split(":")
-                                d[s[0]] = s[1:]
-                                d["hasData"] = True
+                                d[s[0]] = s[1].encode('utf-8').strip()
                             elif data.count(":") == 2 and "," in data:
                                 s = data.split(",")
                                 s1 = s[0].split(":")
-                                d[s1[0]] = s1[1]
+                                d[s1[0]] = s1[1].strip()
                                 s1 = s[1].split(":")
-                                d[s1[0]] = s1[1]
-                                d["hasData"] = True
-                            else:
-                                d["hasData"] = False
-                            # print "in case number %s" % d["Case No."]
-                            # print "no data in CDisp RDISPDATE1 collected"
+                                d[s1[0]] = s1[1].strip()
+                                                                       
+                                                                           
         else:
             d["hasData"] = False
         # print "in case number %s" % d["Case No."]
@@ -355,27 +380,39 @@ class Bank:
             while self.done is False:
 
                 case = self.currentCase
-                self.caseCount = self.caseCount + 1
                 # print "this is case [%d/%d]" % (self.caseCount, self.numcases)
                 # print "trying case %s" % case
                 try:
                     link = WebDriverWait(self.browser.driver,self.browser.wait).until(EC.element_to_be_clickable((By.LINK_TEXT,case)))
                     link.click()  #click on the required link to access a single case
                     self.parseSingleCase()  # get individual case data
-                    self.caseDone()
+                    self.caseDone(case)
+                    self.caseCount = self.caseCount + 1
+                    self.browser.driver.implicitly_wait(1)  # give browser a break
                     self.browser.driver.back()  #  bring browser back on page
                 except TimeoutException:
                     # print "could not open link for case %s" % case
                     # print "trying to reset the browser"
                     self.data['cases'][self.currentCase] = { "hasData" : False }
-                    self.caseDone()
+                    self.caseDone(case)
+                    self.caseCount = self.caseCount + 1
                     self.browser.goHome()
                     self.browser.goSearch()
                     self.reSubmitSearch()
                     pass
                 except AttributeError:
-                    print "could not parse case %s" % case
+                    self.browser.driver.back()  #  bring browser back on page
+                    self.caseDone(case)
+                    self.caseCount = self.caseCount + 1
+                    self.data['not_parsed'].append(case)
+                    print "could not parse case %s because of AttributeError" % case
                     print ""
+                    pass
+                except BrowserErrorException:
+                    print "browser responds with error. reset."
+                    self.browser.goHome()
+                    self.browser.goSearch()
+                    self.reSubmitSearch()
                     pass
 
                 self.data['caseCount'] = self.caseCount
@@ -429,29 +466,31 @@ def parse_string(el):
    return text.strip()
 
 # run the scraper:
-
+# banks = ["NATIONAL CITY BANK","AURORA LOAN SERVICES","LASALLE BANK NA","PROVIDIAN NATIONAL BANK","NEVADA STATE BANK","WASHINGTON MUTUAL","CAPITAL ONE","ONE NEVADA CREDIT UNION","AMERICA FIRST CREDIT UNION","CLARK COUNTY CREDIT UNION","WEST STAR CREDIT UNION","PLUS CREDIT UNION","STAGE EMPLOYEES FEDERAL CREDIT UNION"]
+    # banks = ["US BANK"]
+    #banks =["WELLS FARGO BANK","US BANK","CITIBANK","DEUTSCHE BANK NA TRUS","BAC HOME LOAN SERVICI","JP MORTGAGE CHASE BANK","CHASE HOME FINANCE","HSBC ","BANK OF AMERICA","GMAC ","PNC NATIONAL BANK","BANK OF NEW YORK MELL","NATIONAL CITY BANK","AURORA LOAN SERVICES","LASALLE BANK NA","PROVIDIAN NATIONAL BANK","NEVADA STATE BANK","WASHINGTON MUTUAL","CAPITAL ONE","ONE NEVADA CREDIT UNION","AMERICA FIRST CREDIT UNION","CLARK COUNTY CREDIT UNION","WEST STAR CREDIT UNION","PLUS CREDIT UNION","STAGE EMPLOYEES FEDERAL CREDIT UNION"]
+    # banks =["US BANK","NEVADA STATE BANK","ONE NEVADA CREDIT UNION","AURORA LOAN SERVICES","LASALLE BANK NA","CLARK COUNTY CREDIT UNION","STAGE EMPLOYEES FEDERAL CREDIT UNION"]
 
 def run():
-	banks = ["US BANK","CITIBANK","DEUTSCHE BANK NA TRUS","BAC HOME LOAN SERVICI","JP MORTGAGE CHASE BANK","CHASE HOME FINANCE","HSBC ","BANK OF AMERICA","GMAC ","PNC NATIONAL BANK","BANK OF NEW YORK MELL"]
-	# banks = ["US BANK"]
-	# banks =["WELLS FARGO BANK","US BANK","CITIBANK","DEUTSCHE BANK NA TRUS","BAC HOME LOAN SERVICI","JP MORTGAGE CHASE BANK","CHASE HOME FINANCE","HSBC ","BANK OF AMERICA","GMAC ","PNC NATIONAL BANK","BANK OF NEW YORK MELL","NATIONAL CITY BANK","AURORA LOAN SERVICES","LASALLE BANK NA","PROVIDIAN NATIONAL BANK","NEVADA STATE BANK","WASHINGTON MUTUAL","CAPITAL ONE","ONE NEVADA CREDIT UNION","AMERICA FIRST CREDIT UNION","CLARK COUNTY CREDIT UNION","WEST STAR CREDIT UNION","PLUS CREDIT UNION","STAGE EMPLOYEES FEDERAL CREDIT UNION"]
-	# provide 2 time spans by default
-	dateSpan = ["01/01/2000", "01/01/2015"]
-	dr = Driver("https://www.clarkcountycourts.us/Anonymous/default.aspx",30)
-	for b in banks:
-		print ""
-		print "starting to search: %s" % b
-		print "==========================="
-		print ""
-		bb = Bank(b, dr, dateSpan)
-		retval = bb.startBankSearch()
+	
+    banks = ["GMAC","PROVIDIAN NATIONAL BANK"]
+    # provide 2 time spans by default
+    dateSpan = ["01/01/2000", "01/01/2015"]
+    dr = Driver("https://www.clarkcountycourts.us/Anonymous/default.aspx",30)
+    for b in banks:
+    	print ""
+    	print "starting to search: %s" % b
+    	print "==========================="
+    	print ""
+    	bb = Bank(b, dr, dateSpan)
+    	retval = bb.startBankSearch()
         bb.cleanDates()
-
-	print "scraper finished with:"
-	print banks
-	print "exiting."
-	dr.driver.quit()
-	return 0
+    
+    print "scraper finished with:"
+    print banks
+    print "exiting."
+    dr.driver.quit()
+    return 0
 
 if __name__ == "__main__":
 	run()
