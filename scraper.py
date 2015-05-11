@@ -491,12 +491,12 @@ def run():
     dateSpan = ["01/01/2000", "01/01/2015"]
     dr = Driver("https://www.clarkcountycourts.us/Anonymous/default.aspx",30)
     ib= 0
-    while ib < len(banks):
+    while ib < len(b2):
     	print ""
     	print "starting to search: %s" % b2[ib]
     	print "==========================="
     	print ""
-    	bb = Bank(banks[ib], dr, dateSpan)
+    	bb = Bank(b2[ib], dr, dateSpan)
     	retval = bb.startBankSearch()
         ib += 1
     
