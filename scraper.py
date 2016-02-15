@@ -125,6 +125,12 @@ class Bank:
 
         soup = BeautifulSoup(self.browser.driver.page_source)
 
+        # check if search was valid
+        valid = soup.find_all(string="No cases matched your search criteria.")
+        if len(valid) > 0:
+            raise NoCasesException("No Cases found in %s for %s - %s" % (self.bankname, self.dates[0], self.dates[1]))
+
+
         # Breach of Contract cases
         BoCcases = {}
         # get the results table
@@ -132,7 +138,7 @@ class Bank:
         rows = tab[0].findAll('tr')
         for rowv in rows[3:]:
             cols = rowv.findAll('td')
-            if term in cols[4].text:
+            if term in cols[4].termxt:
                 BoCcases[cols[0].text] = rowv
 
         self.numcases = len(BoCcases)
@@ -488,7 +494,7 @@ def run():
     b2 = list(set(banks_short))  # some are double
     # banks = getLenders("lenders.csv")
     # provide 2 time spans by default
-    dateSpan = ["01/01/2000", "01/01/2015"]
+    dateSpan = ["01/01/1980", "01/01/2015"]
     dr = Driver("https://www.clarkcountycourts.us/Anonymous/default.aspx",30)
     ib= 0
     while ib < len(b2):
