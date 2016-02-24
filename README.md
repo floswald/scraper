@@ -4,7 +4,9 @@
 
 # web scraper for Clark County Court data
 
-This python scraper is used in Li and Oswald (2015). Please observe the license file.
+This python scraper is used in Li and Oswald (2015) to collect data from [Clark County Courts](https://www.clarkcountycourts.us/Anonymous/default.aspx).
+
+Please observe the license file.
 
 this repo has a python webscraper that uses 
 
